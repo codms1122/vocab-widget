@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>영단어 암기 위젯</title>
+  <!-- SheetJS for Excel parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --bg: #f6f7f8; /* off-white */
+      --text: #1b1f23;
+      --muted: #6b7280;
+      --card: #ffffff;
+      --border: #e5e7eb;
+      --accent: #3b82f6;
+      --accent-contrast: #ffffff;
+      --shadow: 0 10px 25px rgba(0,0,0,0.08);
+    }
+    .dark {
+      --bg: #121417; /* not pure #000 */
+      --text: #e5e7eb;
+      --muted: #9aa4b2;
+      --card: #1a1f24;
+      --border: #2a2f36;
+      --accent: #60a5fa;
+      --accent-contrast: #0b1220;
+      --shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Apple SD Gothic Neo, "Malgun Gothic", Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg); color: var(--text);
+    }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 16px 18px 32px; }
+    header {
+      display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; margin-bottom: 12px;
+    }
+    .controls {
+      display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: center; margin-bottom: 12px;
+    }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    label { font-size: 12px; color: var(--muted); }
+    select, button, input[type="file"] {
+      background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 14px; box-shadow: none; outline: none;
+    }
+    button.primary { background: var(--accent); color: var(--accent-contrast); border: none; }
+    button.ghost { background: transparent; border: 1px solid var(--border); }
+    .pill { padding: 6px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+
+    .card-area { display: grid; place-items: center; margin-top: 10px; }
+    .card {
+      width: min(760px, 92vw); min-height: 260px; background: var(--card); border: 1px solid var(--border);
+      border-radius: 16px; box-shadow: var(--shadow); padding: 22px 20px 64px; position: relative; cursor: pointer; perspective: 1000px;
+    }
+    .card-inner { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .5s ease; }
+    .card.flipped .card-inner { transform: rotateY(180deg); }
+    .face { position: absolute; inset: 0; backface-visibility: hidden; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
+    .back { transform: rotateY(180deg); }
+    .word { font-size: clamp(22px, 5vw, 32px); font-weight: 700; letter-spacing: .2px; }
+    .pos-meaning { color: var(--muted); font-size: 15px; }
+    .sentence { font-size: clamp(16px, 3.5vw, 20px); line-height: 1.6; }
+    .sentence strong { font-weight: 800; text-decoration: underline; text-underline-offset: 2px; }
+    .sentence-ko { color: var(--muted); font-size: 14px; }
+    .watermark { position: absolute; right: 14px; top: 14px; font-size: 12px; color: var(--muted); }
+    .pager { position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 6px; }
+    .pager button { padding: 8px 10px; border-radius: 10px; }
+    .footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+    .progress { font-size: 13px; color: var(--muted); }
+
+    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .dropzone {
+      border: 1.5px dashed var(--border); border-radius: 12px; padding: 12px; text-align: center; background: transparent; color: var(--muted);
+    }
+    .dropzone.drag { border-color: var(--accent); color: var(--text); background: rgba(96,165,250,0.08); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="row">
+        <div class="pill" id="fileStatus">엑셀 미업로드</div>
+        <div class="pill" id="dayStatus">Day -</div>
+        <div class="pill" id="countStatus">0 / 0</div>
+      </div>
+      <div class="row">
+        <button class="ghost" id="themeToggle" title="테마 전환">라이트/다크</button>
+      </div>
+    </header>
+
+    <div class="controls">
+      <div>
+        <label>엑셀(.xlsx) 업로드</label>
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" accept=".xlsx,.xls" />
+          <div class="hint">파일을 선택하거나 이 영역에 드래그 앤 드롭</div>
+        </div>
+      </div>
+      <div>
+        <label>Day 선택</label>
+        <select id="daySelect" disabled>
+          <option value="">먼저 엑셀을 업로드하세요</option>
+        </select>
+      </div>
+      <div style="align-self:end;">
+        <button class="primary" id="nextBtn" disabled>다음 ▶</button>
+      </div>
+    </div>
+
+    <div class="card-area">
+      <div class="card" id="card" aria-live="polite">
+        <div class="card-inner">
+          <div class="face front">
+            <div class="watermark">카드를 클릭해 뒤집기</div>
+            <div class="word" id="frontWord">단어</div>
+            <div class="sentence" id="frontSentence">예문이 여기 표시됩니다.</div>
+          </div>
+          <div class="face back">
+            <div class="watermark">다시 클릭해 앞면으로</div>
+            <div class="word" id="backWord">단어</div>
+            <div class="pos-meaning" id="posMeaning">(품사) 의미</div>
+            <div class="sentence" id="backSentence">영문 예문</div>
+            <div class="sentence-ko" id="backSentenceKo">한글 해석</div>
+          </div>
+        </div>
+        <div class="pager">
+          <button class="ghost" id="prevEx" title="이전 예문" aria-label="이전 예문">◀</button>
+          <span id="exPage" class="pill">0 / 0</span>
+          <button class="ghost" id="nextEx" title="다음 예문" aria-label="다음 예문">▶</button>
+        </div>
+      </div>
+      <div class="hint">Day 내부 단어 순서는 <b>랜덤</b>이며, 이동은 <b>다음</b> 버튼만 지원합니다.</div>
+    </div>
+
+    <div class="footer">
+      <div class="progress" id="progressText">오늘 학습 0개</div>
+      <div class="progress" id="resumeHint"></div>
+    </div>
+  </div>
+
+  <script>
+    // ---------- Utilities ----------
+    const $ = (sel) => document.querySelector(sel);
+    const todayKey = () => new Date().toISOString().slice(0,10); // YYYY-MM-DD (local-ish)
+
+    function shuffle(array) {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+      return array;
+    }
+
+    function escapeHTML(str = "") {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function emphasizeWord(sentence, word) {
+      if (!sentence || !word) return escapeHTML(sentence || "");
+      // bold only whole-word matches (case-insensitive). Allow simple apostrophes/plurals handling.
+      const safe = sentence;
+      const pattern = new RegExp(`(\\b)(${word.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")})(\\b)`, 'gi');
+      return escapeHTML(safe).replace(pattern, (m) => `<strong>${escapeHTML(m)}</strong>`);
+    }
+
+    // ---------- State ----------
+    const state = {
+      dataByDay: {}, // { 1: [ {word,pos,meaning,examples:[{en,ko},...]}, ... ] }
+      orderByDay: {}, // shuffled index orders per day
+      curDay: null,
+      curIdx: 0,
+      showBack: false,
+      curExIdx: 0,
+      progress: JSON.parse(localStorage.getItem('vocabWidget_progress') || '{}'), // { [day]: { date, seenSet:[idx...], lastIdx } }
+    };
+
+    function saveProgress() {
+      localStorage.setItem('vocabWidget_progress', JSON.stringify(state.progress));
+    }
+
+    function updateProgressUI() {
+      const d = state.curDay;
+      let seen = 0, total = 0;
+      if (d && state.progress[d] && state.progress[d].date === todayKey()) {
+        seen = (state.progress[d].seenSet || []).length;
+      }
+      if (d && state.dataByDay[d]) total = state.dataByDay[d].length;
+      $('#progressText').textContent = `오늘 학습 ${seen}개`;
+      $('#countStatus').textContent = `${Math.min(state.curIdx+1, total)} / ${total}`;
+      const resume = state.progress[d] && typeof state.progress[d].lastIdx === 'number'
+        ? `이 Day의 마지막 위치: ${state.progress[d].lastIdx+1} / ${total}`
+        : '';
+      $('#resumeHint').textContent = resume;
+    }
+
+    // ---------- Excel Parsing ----------
+    async function handleFile(file) {
+      if (!file) return;
+      $('#fileStatus').textContent = `로드 중...`;
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+
+      const byDay = {};
+      for (const name of wb.SheetNames) {
+        // Expect sheet names: "시트1" ... "시트30"
+        const match = name.match(/시트(\d{1,2})/);
+        if (!match) continue;
+        const day = parseInt(match[1], 10);
+        if (day < 1 || day > 30) continue;
+
+        const ws = wb.Sheets[name];
+        const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
+        // Group by word
+        const map = new Map();
+        for (const row of json) {
+          const word = String(row.word || '').trim();
+          if (!word) continue;
+          const pos = String(row.pos || '').trim();
+          const meaning = String(row.meaning || '').trim();
+          const en = String(row.sentence_en || '').trim();
+          const ko = String(row.sentence_ko || '').trim();
+          if (!map.has(word)) map.set(word, { word, pos, meaning, examples: [] });
+          if (en || ko) map.get(word).examples.push({ en, ko });
+        }
+        byDay[day] = Array.from(map.values());
+      }
+
+      state.dataByDay = byDay;
+      // Build day select
+      const sel = $('#daySelect');
+      sel.innerHTML = '';
+      const days = Object.keys(byDay).map(Number).sort((a,b)=>a-b);
+      if (days.length === 0) {
+        sel.innerHTML = '<option value="">올바른 시트명을 찾지 못했습니다 (시트1~시트30)</option>';
+        sel.disabled = true;
+        $('#fileStatus').textContent = '업로드 실패';
+        return;
+      }
+      for (const d of days) {
+        const opt = document.createElement('option');
+        opt.value = String(d);
+        opt.textContent = `Day ${d}`;
+        sel.appendChild(opt);
+      }
+      sel.disabled = false;
+      $('#fileStatus').textContent = `${file.name} 불러옴`;
+      // Auto-select first day
+      state.curDay = days[0];
+      sel.value = String(state.curDay);
+      prepareDay(state.curDay);
+    }
+
+    function prepareDay(day) {
+      const list = state.dataByDay[day] || [];
+      state.orderByDay[day] = shuffle([...Array(list.length).keys()]);
+      state.curIdx = 0;
+      state.showBack = false;
+      state.curExIdx = 0;
+      $('#dayStatus').textContent = `Day ${day}`;
+      $('#nextBtn').disabled = list.length === 0;
+      renderCard();
+      updateProgressUI();
+    }
+
+    function currentEntry() {
+      const list = state.dataByDay[state.curDay] || [];
+      if (list.length === 0) return null;
+      const idx = state.orderByDay[state.curDay][state.curIdx] ?? 0;
+      return list[idx];
+    }
+
+    function ensureProgressDay() {
+      const d = state.curDay;
+      if (!state.progress[d]) state.progress[d] = { date: todayKey(), seenSet: [], lastIdx: 0 };
+      if (state.progress[d].date !== todayKey()) state.progress[d] = { date: todayKey(), seenSet: [], lastIdx: 0 };
+    }
+
+    function markSeen() {
+      ensureProgressDay();
+      const d = state.curDay;
+      const realIdx = state.orderByDay[d][state.curIdx];
+      const set = new Set(state.progress[d].seenSet);
+      set.add(realIdx);
+      state.progress[d].seenSet = Array.from(set);
+      state.progress[d].lastIdx = state.curIdx;
+      saveProgress();
+    }
+
+    function renderCard() {
+      const entry = currentEntry();
+      const hasEntry = !!entry;
+      const frontWord = $('#frontWord');
+      const frontSentence = $('#frontSentence');
+      const backWord = $('#backWord');
+      const posMeaning = $('#posMeaning');
+      const backSentence = $('#backSentence');
+      const backSentenceKo = $('#backSentenceKo');
+      const exPage = $('#exPage');
+
+      if (!hasEntry) {
+        frontWord.textContent = '데이터 없음';
+        frontSentence.textContent = '엑셀을 업로드하고 Day를 선택하세요.';
+        backWord.textContent = '';
+        posMeaning.textContent = '';
+        backSentence.textContent = '';
+        backSentenceKo.textContent = '';
+        exPage.textContent = '0 / 0';
+        $('#nextBtn').disabled = true;
+        return;
+      }
+
+      // sentence index clamp
+      if (!entry.examples || entry.examples.length === 0) state.curExIdx = 0;
+      if (entry.examples && state.curExIdx >= entry.examples.length) state.curExIdx = 0;
+
+      const ex = entry.examples && entry.examples.length ? entry.examples[state.curExIdx] : { en: '', ko: '' };
+
+      // Front
+      frontWord.textContent = entry.word || '';
+      frontSentence.innerHTML = ex.en ? emphasizeWord(ex.en, entry.word) : '<span style="color:var(--muted)">예문 없음</span>';
+
+      // Back
+      backWord.textContent = entry.word || '';
+      const pm = [];
+      if (entry.pos) pm.push(entry.pos);
+      if (entry.meaning) pm.push(entry.meaning);
+      posMeaning.textContent = pm.join(' · ');
+      backSentence.innerHTML = ex.en ? escapeHTML(ex.en) : '';
+      backSentenceKo.textContent = ex.ko || '';
+
+      // Example pager
+      const totalEx = entry.examples && entry.examples.length ? entry.examples.length : 0;
+      exPage.textContent = `${totalEx ? (state.curExIdx+1) : 0} / ${totalEx}`;
+
+      // Update count
+      updateProgressUI();
+
+      // Accessibility labels
+      $('#card').setAttribute('aria-label', state.showBack ? '단어 정보(뒷면)' : '단어/예문(앞면)');
+      // Flip UI
+      $('#card').classList.toggle('flipped', !!state.showBack);
+    }
+
+    function nextWord() {
+      const list = state.dataByDay[state.curDay] || [];
+      if (!list.length) return;
+      markSeen();
+      if (state.curIdx < list.length - 1) {
+        state.curIdx += 1;
+      } else {
+        // Loop to start when reaching the end
+        state.curIdx = 0;
+      }
+      state.curExIdx = 0;
+      state.showBack = false;
+      renderCard();
+    }
+
+    function prevExample() {
+      const entry = currentEntry();
+      const n = entry?.examples?.length || 0;
+      if (n <= 1) return;
+      state.curExIdx = (state.curExIdx - 1 + n) % n;
+      renderCard();
+    }
+
+    function nextExample() {
+      const entry = currentEntry();
+      const n = entry?.examples?.length || 0;
+      if (n <= 1) return;
+      state.curExIdx = (state.curExIdx + 1) % n;
+      renderCard();
+    }
+
+    // ---------- Event Wiring ----------
+    $('#fileInput').addEventListener('change', (e) => {
+      const f = e.target.files?.[0];
+      if (f) handleFile(f);
+    });
+
+    // Drag & Drop
+    const dz = $('#dropzone');
+    ;['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev, (e)=>{e.preventDefault(); dz.classList.add('drag');}));
+    ;['dragleave','drop'].forEach(ev=>dz.addEventListener(ev, (e)=>{e.preventDefault(); dz.classList.remove('drag');}));
+    dz.addEventListener('drop', (e)=>{
+      const f = e.dataTransfer.files?.[0];
+      if (f) handleFile(f);
+    });
+
+    $('#daySelect').addEventListener('change', (e) => {
+      const day = parseInt(e.target.value, 10);
+      if (!day) return;
+      state.curDay = day;
+      prepareDay(day);
+    });
+
+    $('#nextBtn').addEventListener('click', () => nextWord());
+
+    $('#card').addEventListener('click', () => {
+      state.showBack = !state.showBack;
+      renderCard();
+    });
+
+    $('#prevEx').addEventListener('click', (e) => { e.stopPropagation(); prevExample(); });
+    $('#nextEx').addEventListener('click', (e) => { e.stopPropagation(); nextExample(); });
+
+    // Keyboard support
+    document.addEventListener('keydown', (e) => {
+      if (e.key === ' ') { e.preventDefault(); state.showBack = !state.showBack; renderCard(); }
+      if (e.key === 'Enter') { e.preventDefault(); nextWord(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); prevExample(); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); nextExample(); }
+    });
+
+    // Theme toggle
+    const isDark = () => document.documentElement.classList.contains('dark');
+    $('#themeToggle').addEventListener('click', () => {
+      document.documentElement.classList.toggle('dark');
+      localStorage.setItem('vocabWidget_theme', isDark() ? 'dark' : 'light');
+    });
+    // Init theme
+    const savedTheme = localStorage.getItem('vocabWidget_theme');
+    if (savedTheme === 'dark') document.documentElement.classList.add('dark');
+
+    // Initial blank state
+    renderCard();
+  </script>
+</body>
+</html>
