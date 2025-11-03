@@ -5,15 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>영단어 암기 위젯</title>
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <!-- Optional: 고정 폰트 적용 (Pretendard Variable) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css" />
   <style>
     :root{
       --bg:#f6f7f8; --text:#1b1f23; --muted:#6b7280; --card:#ffffff; --border:#e5e7eb; --accent:#3b82f6; --accent-contrast:#ffffff; --shadow:0 10px 25px rgba(0,0,0,.08);
     }
-    .dark{
-      --bg:#13161a; --text:#e5e7eb; --muted:#9aa4b2; --card:#1b2026; --border:#2a2f36; --accent:#60a5fa; --accent-contrast:#0b1220; --shadow:0 10px 30px rgba(0,0,0,.35);
-    }
+    .dark{ --bg:#13161a; --text:#e5e7eb; --muted:#9aa4b2; --card:#1b2026; --border:#2a2f36; --accent:#60a5fa; --accent-contrast:#0b1220; --shadow:0 10px 30px rgba(0,0,0,.35); }
     html,body{height:100%}
-    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Noto Sans,Apple SD Gothic Neo,"Malgun Gothic",Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";background:var(--bg);color:var(--text)}
+    body{margin:0;font-family:'Pretendard Variable', ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Apple SD Gothic Neo, "Malgun Gothic", Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";background:var(--bg);color:var(--text)}
     .wrap{max-width:900px;margin:0 auto;padding:16px 18px 32px}
     header{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;margin-bottom:12px}
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -27,7 +27,7 @@
     .dropzone{border:1.5px dashed var(--border);border-radius:12px;padding:12px;text-align:center;color:var(--muted)}
     .dropzone.drag{border-color:var(--accent);color:var(--text);background:rgba(96,165,250,.08)}
 
-    /* --- CARD --- */
+    /* --- CARD (전체 회전) --- */
     .card-area{display:grid;place-items:center;perspective:1200px}
     .card{width:min(560px,92vw);min-height:520px;position:relative;cursor:pointer;transform-style:preserve-3d;transition:transform .55s ease}
     .card.no-anim{transition:none!important}
@@ -40,6 +40,11 @@
     .sentence{font-size:clamp(16px,3.2vw,20px);line-height:1.7;max-width:85%}
     .sentence strong{font-weight:800;text-decoration:underline;text-underline-offset:2px}
     .sentence-ko{color:var(--muted);font-size:15px}
+
+    /* 품사 뱃지 + 뜻 라인 */
+    .meaning-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
+    .pos-badge{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 10px;border-radius:10px;background:#0f172a;color:#fff;font-weight:800;font-size:14px;letter-spacing:.2px}
+    .meaning-text{font-size:clamp(30px,6vw,44px);font-weight:800}
 
     .pager{position:absolute;right:12px;bottom:12px;display:flex;align-items:center;gap:6px}
     .pager button{padding:8px 10px;border-radius:10px}
@@ -84,7 +89,10 @@
           <div class="sentence" id="frontSentence"></div>
         </div>
         <div class="face back">
-          <div class="word" id="backMeaning">뜻</div>
+          <div class="meaning-row">
+            <span class="pos-badge" id="posBadge"></span>
+            <div class="meaning-text" id="backMeaning"></div>
+          </div>
           <div class="pos-meaning" id="backMeta"></div>
           <div class="sentence" id="backSentence"></div>
           <div class="sentence-ko" id="backSentenceKo"></div>
@@ -105,18 +113,17 @@
   </div>
 
   <script>
-    const $ = (s)=>document.querySelector(s);
-    const todayKey = ()=> new Date().toISOString().slice(0,10);
+    const $=(s)=>document.querySelector(s);
+    const todayKey=()=>new Date().toISOString().slice(0,10);
     function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
     function escapeHTML(s=""){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#039;"); }
-    function emphasizeWord(sentence, word){ if(!sentence||!word) return escapeHTML(sentence||""); const pattern=new RegExp(`(\\b)(${word.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\$&")})(\\b)`,`gi`); return escapeHTML(sentence).replace(pattern,(m)=>`<strong>${escapeHTML(m)}</strong>`); }
+    function emphasizeWord(sentence,word){ if(!sentence||!word) return escapeHTML(sentence||""); const pattern=new RegExp(`(\\b)(${word.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\$&")})(\\b)`,`gi`); return escapeHTML(sentence).replace(pattern,(m)=>`<strong>${escapeHTML(m)}</strong>`); }
 
     const state={ dataByDay:{}, orderByDay:{}, curDay:null, curIdx:0, showBack:false, curExIdx:0, progress: JSON.parse(localStorage.getItem('vocabWidget_progress')||'{}') };
     function saveProgress(){ localStorage.setItem('vocabWidget_progress', JSON.stringify(state.progress)); }
     function updateProgressUI(){ const d=state.curDay; let seen=0,total=0; if(d&&state.progress[d]&&state.progress[d].date===todayKey()) seen=(state.progress[d].seenSet||[]).length; if(d&&state.dataByDay[d]) total=state.dataByDay[d].length; $('#progressText').textContent=`오늘 학습 ${seen}개`; $('#countStatus').textContent=`${Math.min(state.curIdx+1,total)} / ${total}`; const resume=(state.progress[d]&&typeof state.progress[d].lastIdx==='number')?`이 Day의 마지막 위치: ${state.progress[d].lastIdx+1} / ${total}`:''; $('#resumeHint').textContent=resume; }
 
-    async function handleFile(file){ if(!file) return; $('#fileStatus').textContent='로드 중...'; const buf=await file.arrayBuffer(); const wb=XLSX.read(buf,{type:'array'});
-      const byDay={};
+    async function handleFile(file){ if(!file) return; $('#fileStatus').textContent='로드 중...'; const buf=await file.arrayBuffer(); const wb=XLSX.read(buf,{type:'array'}); const byDay={};
       for(const name of wb.SheetNames){ const m=name.match(/시트(\d{1,2})/); if(!m) continue; const day=parseInt(m[1],10); if(day<1||day>30) continue; const ws=wb.Sheets[name]; const json=XLSX.utils.sheet_to_json(ws,{defval:''}); const map=new Map(); for(const row of json){ const word=String(row.word||'').trim(); if(!word) continue; const pos=String(row.pos||'').trim(); const meaning=String(row.meaning||'').trim(); const en=String(row.sentence_en||'').trim(); const ko=String(row.sentence_ko||'').trim(); if(!map.has(word)) map.set(word,{word,pos,meaning,examples:[]}); if(en||ko) map.get(word).examples.push({en,ko}); } byDay[day]=Array.from(map.values()); }
       state.dataByDay=byDay; const sel=$('#daySelect'); sel.innerHTML=''; const days=Object.keys(byDay).map(Number).sort((a,b)=>a-b); if(!days.length){ sel.innerHTML='<option value="">올바른 시트명을 찾지 못했습니다 (시트1~시트30)</option>'; sel.disabled=true; $('#fileStatus').textContent='업로드 실패'; return; } for(const d of days){ const o=document.createElement('option'); o.value=String(d); o.textContent=`Day ${d}`; sel.appendChild(o);} sel.disabled=false; $('#fileStatus').textContent=`${file.name} 불러옴`; state.curDay=days[0]; sel.value=String(state.curDay); prepareDay(state.curDay); }
 
@@ -125,12 +132,12 @@
     function ensureProgressDay(){ const d=state.curDay; if(!state.progress[d]) state.progress[d]={date:todayKey(),seenSet:[],lastIdx:0}; if(state.progress[d].date!==todayKey()) state.progress[d]={date:todayKey(),seenSet:[],lastIdx:0}; }
     function markSeen(){ ensureProgressDay(); const d=state.curDay; const realIdx=state.orderByDay[d][state.curIdx]; const set=new Set(state.progress[d].seenSet); set.add(realIdx); state.progress[d].seenSet=Array.from(set); state.progress[d].lastIdx=state.curIdx; saveProgress(); }
 
-    function renderCard(){ const e=currentEntry(); const frontWord=$('#frontWord'),frontSentence=$('#frontSentence'),backMeaning=$('#backMeaning'),backMeta=$('#backMeta'),backSentence=$('#backSentence'),backSentenceKo=$('#backSentenceKo'),exPage=$('#exPage'); if(!e){ frontWord.textContent='데이터 없음'; frontSentence.textContent=''; backMeaning.textContent=''; backMeta.textContent=''; backSentence.textContent=''; backSentenceKo.textContent=''; exPage.textContent='0 / 0'; $('#nextBtn').disabled=true; return; }
+    function renderCard(){ const e=currentEntry(); const frontWord=$('#frontWord'),frontSentence=$('#frontSentence'),posBadge=$('#posBadge'),backMeaning=$('#backMeaning'),backMeta=$('#backMeta'),backSentence=$('#backSentence'),backSentenceKo=$('#backSentenceKo'),exPage=$('#exPage'); if(!e){ frontWord.textContent='데이터 없음'; frontSentence.textContent=''; posBadge.textContent=''; backMeaning.textContent=''; backMeta.textContent=''; backSentence.textContent=''; backSentenceKo.textContent=''; exPage.textContent='0 / 0'; $('#nextBtn').disabled=true; return; }
       if(!e.examples||e.examples.length===0) state.curExIdx=0; if(e.examples&&state.curExIdx>=e.examples.length) state.curExIdx=0; const ex=(e.examples&&e.examples.length)?e.examples[state.curExIdx]:{en:'',ko:''};
-      // front
+      // 앞면: 단어 + 강조 예문
       frontWord.textContent=e.word||''; frontSentence.innerHTML=ex.en?emphasizeWord(ex.en,e.word):'';
-      // back (meaning as the big title)
-      backMeaning.textContent=e.meaning||''; const metaParts=[]; if(e.word) metaParts.push(e.word); if(e.pos) metaParts.push(e.pos); backMeta.textContent=metaParts.join(' · ');
+      // 뒷면: 품사 뱃지 + 뜻(대제목), 보조라인(단어·품사)
+      posBadge.textContent=e.pos||''; backMeaning.textContent=e.meaning||''; const meta=[]; if(e.word) meta.push(e.word); if(e.pos) meta.push(e.pos); backMeta.textContent=meta.join(' · ');
       backSentence.innerHTML=ex.en?escapeHTML(ex.en):''; backSentenceKo.textContent=ex.ko||'';
       const totalEx=(e.examples&&e.examples.length)?e.examples.length:0; exPage.textContent=`${totalEx?(state.curExIdx+1):0} / ${totalEx}`;
       updateProgressUI();
